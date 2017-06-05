@@ -21,10 +21,6 @@
         <label for="plants-chance">Select plants chance:</label>
         <input id="plants-chance" value="0.5" type="number" max="1" min="0" step="0.01"/>
       </div>
-      <div>
-        <label for="herbivore-chance">Select herbivore chance:</label>
-        <input id="herbivore-chance" value="0.5" placeholder="0" type="number" max="1" min="0" step="0.01"/>
-      </div>
     </div>
     <div>
       <h2>Default number of species</h2>
@@ -38,12 +34,18 @@
       </div>
       <div>
         <label for="predator-number">Select number of predators:</label>
-        <input id="predator-number" value="10" min="0" type="number"/>
+        <input id="predator-number" value="20" min="0" type="number"/>
       </div>
     </div>
     <div class="controls">
       <div>Turn: <span class="turn-number">0</span></div>
+      <div>Plants <span class="plants-number">0</span></div>
+      <div>Herbivores: <span class="herbivore-number">0</span></div>
+      <div>Predators: <span class="predators-number">0</span></div>
+      <div>*You can't stop "10/100" turns - only page refresh can help</div>
       <button class="next-turn">Next turn</button>
+      <button class="next-ten-turns">Next 10 turns</button>
+      <button class="next-hundred-turns">Next 100 turns</button>
       <button class="reset-world">Start new generation</button>
     </div>
     </div>
