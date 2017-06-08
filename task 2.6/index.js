@@ -1,6 +1,16 @@
+// small polyfill
+if (!Array.prototype.contains) {
+    Array.prototype.contains = function(s) {
+        return this.indexOf(s) > -1
+    }
+}
 document.addEventListener('DOMContentLoaded', init, false);
 
+let sheets = [],
+    maxDepth = 10; // maxim depth of the recursive calls
+
 function Sheet(table, columns, numberOfRows) {
+  this.id = createId();
   this.table = table;
   this.columns = columns;
   this.rows = numberOfRows;
@@ -17,18 +27,22 @@ Sheet.prototype.createRow = function(rowNumber) {
   // adding event listeners to cells
   this.columns.forEach((col)=>{
     let cell = col + '-' + rowNumber;
-    tr.getElementsByClassName(cell)[0].addEventListener('keyup', this.cellChange.bind(this));
-    this.cells[cell] = new Cell(cell);
+    tr.getElementsByClassName(cell)[0].addEventListener('blur', this.cellChange.bind(this));
+    tr.getElementsByClassName(cell)[0].addEventListener('focus', this.focusCell.bind(this));
+    // creating new cell - not sure how to pass sheet data(should it be id or..?);
+    this.cells[cell] = new Cell(cell, this.id);
   });
   return tr;
+}
+Sheet.prototype.focusCell = function(e) {
+  let cell = e.target.className;
+  this.cells[cell].changeValue(false);
 }
 // Cell change handler
 Sheet.prototype.cellChange = function(e) {
   let newValue = e.target.value;
   let cell = e.target.className;
-  if (this.cells[cell].formula !== newValue){
-    this.cells[cell].calc(newValue);
-  }
+  this.cells[cell].calc(newValue);
 }
 // sheet initialize operation: creating rows and columns with event listeners
 Sheet.prototype.initialize = function() {
@@ -37,7 +51,7 @@ Sheet.prototype.initialize = function() {
   tr.innerHTML = '<td></td>' + this.columns.map((col)=>'<td>' + col + '</td>').join('');
   this.table.append(tr);
   // creating default rows
-  for (let i = 0; i < this.rows; ++i) {
+  for (let i = 1; i < this.rows; ++i) {
     let newRow = this.createRow(i);
     this.table.appendChild(newRow);
   }
@@ -52,30 +66,147 @@ Sheet.prototype.value = function(column, row) {
 }
 // calculating cell's value
 
-function Cell(className) {
+function Cell(className, sheetId) {
   this.id = className;
+  this.sheetId = sheetId;
   this.value = '';
   this.formula = '';
-  this.precedents = [];
-  this.dependents = [];
+  this.error = '';
+  this.precedents = []; // от чего зависит
+  this.dependents = []; // что зависит
 }
 // regex check for formulas
 Cell.prototype.regexValue = /c\([0-9]*,[0-9]*\)/g;
-Cell.prototype.calc = function(newValue) {
-  this.formula = newValue;
-  // checking if there're any formulas
-  // calculating value
-  let trimValue = newValue.replace(/\s/g,'');
-  let valuesFormulas = trimValue.match(this.regexValue);
-  if (valuesFormulas) {
-    
+// changing visual representation
+Cell.prototype.changeValue = function(notSelected) {
+  document.getElementsByClassName(this.id)[0].value = notSelected ? this.value : this.formula;
+}
+// calucating formulas.
+Cell.prototype.calc = function(newValue, depth = 1, broadcasting) {
+  if(depth < maxDepth){
+    // damn, no default values in formula
+    this.formula = newValue || newValue === '0' ? newValue : this.formula;
+    // checking if there're any formulas
+    // calculating value if we have any links
+    let trimValue = this.formula.replace(/\s/g,'');
+    let valuesFormulas = trimValue.match(this.regexValue);
+    let sheet = sheets.find((sheet)=>sheet.id === this.sheetId);
+    if (valuesFormulas) {
+        trimValue = this.calcLink(sheet, trimValue, valuesFormulas, depth, broadcasting);
+    }
+    this.value = this.errorCheck(trimValue).error || eval(trimValue) || '';
+    // recalculating dependent cells values
+    if (depth === 1) {
+      try {
+          this.checkDependents(depth);
+      } catch (e) {;
+          if (depth === 1) this.errorHandling(e);
+          // throw for recursion - otherwise we will have 0(zero) value
+          throw e;
+      }
+    }
+  } else {
+    throw 'ERROR: probably there\'s recursion';
+  }
+  this.changeValue(true);
+}
+// error handling
+Cell.prototype.errorHandling = function(error) {
+    this.value = error;
+    this.changeValue(true);
+}
+Cell.prototype.checkDependents = function(depth) {
+  let newArr = this.dependents.map((el)=>el);
+  let sheetCells = sheets.find((sheet)=>sheet.id === this.sheetId).cells,
+      sheetName = Object.keys(sheetCells);
+  // updating value
+  if (depth !== 1) {
+    this.calc(null, depth, true);
+  }
+  sheetName.forEach((el)=>{
+    let cell = sheetCells[el];
+    // broadcasting event
+    if (this.dependents.contains(cell.id)) {
+        cell.checkDependents(depth + 1);
+    }
+  })
+
+}
+// checking precendents and updating them if needed
+Cell.prototype.checkPrecedents = function(precedents, depth) {
+  let newArr = precedents.map((cel)=>cel.join('-'));
+  // deleting unneeded dependents for precedent cells
+  let deletePred = this.precedents.filter((el)=>!newArr.contains(el));
+  let sheetCells = sheets.find((sheet)=>sheet.id === this.sheetId).cells,
+      cellsNames = Object.keys(sheetCells);
+  cellsNames.forEach((el)=>{
+    let cell = sheetCells[el];
+    if (deletePred.contains(cell.id))
+      cell.changeDependents(this.id);
+  });
+  // adding new dependents
+  let newPred = newArr.filter((el)=>!this.precedents.contains(el));
+  cellsNames.forEach((el)=>{
+    let cell = sheetCells[el];
+    if (newPred.contains(cell.id))
+      cell.changeDependents(this.id, true);
+  });
+  // saving new precedents
+  this.precedents = newArr;
+  // recalculating precendents
+  cellsNames.forEach((el)=>{
+    let cell = sheetCells[el];
+    if (newPred.contains(cell.id)) {
+        try {
+            cell.calc(null, depth + 1);
+        } catch (e) {;
+            if (depth === 1) this.errorHandling(e);
+            // throw for recursion - otherwise we will have 0(zero) value
+            throw e;
+        }
+    }
+  })
+}
+// for dependents change; add ? add new : delete old
+Cell.prototype.changePrecedents = function(className, add=false) {
+  if (add) this.precedents.push(className);
+  else this.precedents.filter((dep, i, arr)=>arr.contains(className));
+}
+Cell.prototype.changeDependents = function(className, add=false) {
+  if (add) {
+    this.dependents.push(className);
+  } else {
+    this.dependents = this.dependents.filter((dep)=>dep !== classNames);
   }
 }
+Cell.prototype.calcLink = function(sheet, trimValue, valuesFormulas, depth, broadcasting) {
+  // calculating our values;
+  let precedents = valuesFormulas.map((formula)=>formula.match(/\d+/g).map((n)=>parseInt(n)));
 
+  // checking dependencies - we gonna recalculate them a bit later
+  if (!broadcasting) this.checkPrecedents(precedents, depth);
+  // calculating data
+  let calculatedValues = precedents.map(([col, row])=>sheet.value(col, row));
+  // getting getting needed values
+  let newValue = trimValue;
+  // replacing formulas with values
+  calculatedValues.forEach((calculated, i)=>{
+    newValue = newValue.replace(`${valuesFormulas[i]}`, calculated);
+  })
+  return newValue;
+}
+Cell.prototype.errorCheck = function(calculatedValue) {
+  let letterIndex = calculatedValue.search(/[^0-9.+-\/*]/g);
+  return letterIndex === -1 ? false : {error: `NaN: Check char at index "${letterIndex}"`};
+}
 function init() {
   let table = document.getElementById('table'),
     columns = ['1', '2', '3', '4', '5', '6'],
-    rows = 5;
+    rows = 5; // number of rows
   // creating new sheet
-  let sheet1 = new Sheet(table, columns, rows);
+  sheets.push(new Sheet(table, columns, rows));
+}
+
+function createId() {
+    return '_' + Math.random().toString(36).substr(2, 9);
 }
