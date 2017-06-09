@@ -27,19 +27,19 @@ Sheet.prototype.createRow = function(rowNumber) {
   // adding event listeners to cells
   this.columns.forEach((col)=>{
     let cell = col + '-' + rowNumber;
-    tr.getElementsByClassName(cell)[0].addEventListener('blur', this.cellChange.bind(this));
+    tr.getElementsByClassName(cell)[0].addEventListener('blur', this.blurChange.bind(this));
     tr.getElementsByClassName(cell)[0].addEventListener('focus', this.focusCell.bind(this));
     // creating new cell - not sure how to pass sheet data(should it be id or..?);
     this.cells[cell] = new Cell(cell, this.id);
   });
   return tr;
 }
+// event listeners for "focus/blur"
 Sheet.prototype.focusCell = function(e) {
   let cell = e.target.className;
   this.cells[cell].changeValue(false);
 }
-// Cell change handler
-Sheet.prototype.cellChange = function(e) {
+Sheet.prototype.blurChange = function(e) {
   let newValue = e.target.value;
   let cell = e.target.className;
   this.cells[cell].calc(newValue);
@@ -56,6 +56,7 @@ Sheet.prototype.initialize = function() {
     this.table.appendChild(newRow);
   }
 }
+// calculating cell's value
 Sheet.prototype.value = function(column, row) {
   let cell = this.cells[column + '-' + row];
   if (cell){
@@ -64,7 +65,7 @@ Sheet.prototype.value = function(column, row) {
     return 0;
   }
 }
-// calculating cell's value
+
 
 function Cell(className, sheetId) {
   this.id = className;
@@ -75,19 +76,18 @@ function Cell(className, sheetId) {
   this.precedents = []; // от чего зависит
   this.dependents = []; // что зависит
 }
-// regex check for formulas
+// regex check for c(row, col) formulas
 Cell.prototype.regexValue = /c\([0-9]*,[0-9]*\)/g;
-// changing visual representation
+// changing visual representation of cell
 Cell.prototype.changeValue = function(notSelected) {
   document.getElementsByClassName(this.id)[0].value = notSelected ? this.value : this.formula;
 }
-// calucating formulas.
+
+// calucating cells' formulas(links) and broadcasting event if cell has any dependents/precedents
 Cell.prototype.calc = function(newValue, depth = 1, broadcasting) {
   if(depth < maxDepth){
-    // damn, no default values in formula
     this.formula = newValue || newValue === '0' ? newValue : this.formula;
-    // checking if there're any formulas
-    // calculating value if we have any links
+    // checking if there're any formulas and calculating their values
     let trimValue = this.formula.replace(/\s/g,'');
     let valuesFormulas = trimValue.match(this.regexValue);
     let sheet = sheets.find((sheet)=>sheet.id === this.sheetId);
@@ -110,11 +110,26 @@ Cell.prototype.calc = function(newValue, depth = 1, broadcasting) {
   }
   this.changeValue(true);
 }
-// error handling
-Cell.prototype.errorHandling = function(error) {
-    this.value = error;
-    this.changeValue(true);
+
+// calculation of the link value
+Cell.prototype.calcLink = function(sheet, trimValue, valuesFormulas, depth, broadcasting) {
+  // calculating our values;
+  let precedents = valuesFormulas.map((formula)=>formula.match(/\d+/g).map((n)=>parseInt(n)));
+
+  // checking dependencies - we gonna recalculate them a bit later
+  if (!broadcasting) this.checkPrecedents(precedents, depth);
+  // calculating data
+  let calculatedValues = precedents.map(([col, row])=>sheet.value(col, row));
+  // getting getting needed values
+  let newValue = trimValue;
+  // replacing formulas with values
+  calculatedValues.forEach((calculated, i)=>{
+    newValue = newValue.replace(`${valuesFormulas[i]}`, calculated);
+  })
+  return newValue;
 }
+
+// broadcasting cell change event to dependent cells for their recalculation
 Cell.prototype.checkDependents = function(depth) {
   let newArr = this.dependents.map((el)=>el);
   let sheetCells = sheets.find((sheet)=>sheet.id === this.sheetId).cells,
@@ -132,7 +147,7 @@ Cell.prototype.checkDependents = function(depth) {
   })
 
 }
-// checking precendents and updating them if needed
+// broadcasting cell change event to precedent cells for recalculation
 Cell.prototype.checkPrecedents = function(precedents, depth) {
   let newArr = precedents.map((cel)=>cel.join('-'));
   // deleting unneeded dependents for precedent cells
@@ -179,26 +194,18 @@ Cell.prototype.changeDependents = function(className, add=false) {
     this.dependents = this.dependents.filter((dep)=>dep !== classNames);
   }
 }
-Cell.prototype.calcLink = function(sheet, trimValue, valuesFormulas, depth, broadcasting) {
-  // calculating our values;
-  let precedents = valuesFormulas.map((formula)=>formula.match(/\d+/g).map((n)=>parseInt(n)));
 
-  // checking dependencies - we gonna recalculate them a bit later
-  if (!broadcasting) this.checkPrecedents(precedents, depth);
-  // calculating data
-  let calculatedValues = precedents.map(([col, row])=>sheet.value(col, row));
-  // getting getting needed values
-  let newValue = trimValue;
-  // replacing formulas with values
-  calculatedValues.forEach((calculated, i)=>{
-    newValue = newValue.replace(`${valuesFormulas[i]}`, calculated);
-  })
-  return newValue;
-}
+// checking for errors - in our case we check for non-digit values
 Cell.prototype.errorCheck = function(calculatedValue) {
   let letterIndex = calculatedValue.search(/[^0-9.+-\/*]/g);
   return letterIndex === -1 ? false : {error: `NaN: Check char at index "${letterIndex}"`};
 }
+// error handling
+Cell.prototype.errorHandling = function(error) {
+    this.value = error;
+    this.changeValue(true);
+}
+
 function init() {
   let table = document.getElementById('table'),
     columns = ['1', '2', '3', '4', '5', '6'],
